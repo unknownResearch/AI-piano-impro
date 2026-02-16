@@ -23,6 +23,7 @@ import time
 import sys
 import fluidsynth
 import os 
+import atexit
 # pip install pyfluidsynth
 from typing import Optional, List
 from rtmidi.midiconstants import NOTE_ON, NOTE_OFF
@@ -40,17 +41,17 @@ from models import get_model_hparams
 from midiUtils import midi_to_dict, to_device, dict_to_song, ms_SONG_to_MIDI_Converter
 from visualizer import Visualizer
 
-TRACES = False
+TRACES = True
+KEY_OFFSET = 0  
 
 ''' DEVICE '''
-device = torch.device('cuda')
-#device = torch.device('mps') 
+if torch.backends.mps.is_available():
+    device = torch.device('mps')
+else:
+    device = torch.device('cuda')
 
 ''' MODEL '''
-model_name = 'no_dtime_good_reference' # original Genie
-#model_name = 'no_dtime_button_concentration_tester_v3' # the button extremes pushes the pitch up/down
-#model_name = 'AE_no_dtime_saturation_v1' # button saturation at extremes, more free pitch generation
-#model_name = 'AE_non_linear_compression_12but_tester_v1' # non-linear compression: more control in middle, less at extremes
+model_name = 'good_ref_88buttons'
 cfg = get_model_hparams(model_name)
 model = load_model(model_name=model_name, cfg=cfg )
 model.to(device)
@@ -59,10 +60,10 @@ model.eval()
 ''' PARAMS '''
 # Get sample seed MIDI path
 #sample_midi_path = './samples/Bach_Prelude_and_Fugue_in_C_major.mid'
-sample_midi_path = './samples/clairTester_to_end.midi'
+sample_midi_path = './samples/Chopin_Nocturnes_Op9No1_In_B_Flat_Minor.mid'
 output_midi_name = './out/interactive_performance'
 
-CTX_LEN = 1024 # num notes in context. tokens = CTX_LENGTH * 3
+CTX_LEN = 256 # num notes in context. tokens = CTX_LENGTH * 3
 TOTAL_GEN_LEN = 1024 # num notes to generate
 
 '''THREADING'''
@@ -71,7 +72,7 @@ buffer_lock = Lock()
 save_lock = Lock()
 
 '''VISUALIZER'''
-visualizer = Visualizer()
+visualizer = Visualizer(button_slots=88)
 
 '''MIDI IN CALLBACK'''
 def midiin_callback(event, data=None):
@@ -94,7 +95,7 @@ def midiin_callback(event, data=None):
           with save_lock:
             print("saving performance")
             save_performance()
-            os._exit(1)
+            sys.exit(0)
 
         if message[1] == 17 and message[2] > 0: # Using PLAY button as a trigger to reset the context
           with save_lock:
@@ -102,20 +103,28 @@ def midiin_callback(event, data=None):
             reset_context()
 
 def key_to_button(key):
-    key = key - 48 # keyboard starts at C = 48
-    button = key #% 20 # 12 white keys, 8 black keys
-    toWhite = [0, 0, 1, 1, 2, 3, 3, 4, 4, 5, 5, 6, 7, 7, 8, 8, 9, 10, 10, 11, 11, 12, 12, 13, 14, 14, 15, 15, 16, 17, 17, 18, 18, 19, 19, 20, 21, 21, 22,22,23,23,24]
-    button = toWhite[button] # convert to white key index
-    #print("k_2_b", button)
-    if TRACES:
-        print("button", button)
-    return button
+    key = key - 48 + KEY_OFFSET # keyboard starts at C = 48
+    return key
 
 """# FLUIDSYNTH INIT """    
 fs = fluidsynth.Synth()
 fs.start()
 sfid = fs.sfload("./piano.sf2")
 fs.program_select(0, sfid, 0, 0)
+
+def cleanup():
+    """Properly release audio and MIDI resources before exit"""
+    print("Cleaning up...")
+    try:
+        fs.delete()
+    except:
+        pass
+    try:
+        midiin.close_port()
+    except:
+        pass
+
+atexit.register(cleanup)
 
 def playNote(note, velocity=100):
     if TRACES:
@@ -151,10 +160,11 @@ def reset_context():
     global dict_output_tokens, dict_input_tokens
 
     i = 0
-    dict_output_tokens['dtime'] = dict_input_tokens['dtime'] 
-    dict_output_tokens['pitch'] = dict_input_tokens['pitch'] 
-    dict_output_tokens['dur'] = dict_input_tokens['dur'] 
-    dict_output_tokens['button'] = dict_input_tokens['button'] 
+    # Reset and extend dict_output_tokens to accommodate TOTAL_GEN_LEN + CTX_LEN tokens
+    for key in dict_input_tokens.keys():
+        extended_list = dict_input_tokens[key].copy()
+        extended_list.extend([0] * (TOTAL_GEN_LEN + CTX_LEN - len(extended_list)))
+        dict_output_tokens[key] = extended_list 
 
 ''' VARIABLES '''
 context = None
@@ -167,7 +177,14 @@ first_note = True
 # Load seed MIDI
 dict_input_tokens, num_notes = midi_to_dict(sample_midi_path) # tokens, without vel
 
-dict_output_tokens = dict_input_tokens.copy()
+# Extend dict_output_tokens to accommodate TOTAL_GEN_LEN + CTX_LEN tokens
+dict_output_tokens = {}
+for key in dict_input_tokens.keys():
+    # Create a list with enough space for all generated tokens
+    extended_list = dict_input_tokens[key].copy()
+    # Extend with zeros to ensure we have enough space
+    extended_list.extend([0] * (TOTAL_GEN_LEN + CTX_LEN - len(extended_list)))
+    dict_output_tokens[key] = extended_list
 
 if TRACES:  
     print("num_notes", num_notes)
@@ -203,6 +220,7 @@ def manageNote(note, velocity):
 
   if velocity > 0: # noteOn
     # Update position token
+    
     dtime = max(0, min(127, int(timeNew) - int(timeLast))) # time difference from previous events, but trunk to maximum 127
     if first_note:
         dtime = 0
@@ -213,6 +231,8 @@ def manageNote(note, velocity):
     # MIDI note to button
     try:
         but = key_to_button(note)
+        if TRACES:
+            print("but", but)
         b[i+CTX_LEN] = but
     except:
         print("ERROR", b[i+CTX_LEN])
@@ -223,30 +243,33 @@ def manageNote(note, velocity):
       'button': torch.tensor(b[i:i+CTX_LEN+1], dtype=torch.long).unsqueeze(0)
     }
     context = to_device(context, device)
-                 
+    if TRACES:
+        print("dtime")
     with torch.inference_mode():
         new_pitch_token = model.gen_pitch_token(context)
     dict_output_tokens['pitch'][i+CTX_LEN] = new_pitch_token
 
     playNote(new_pitch_token, velocity) 
     visualizer.get_note(new_pitch_token, velocity)
-    visualizer.get_button(but, velocity)
+    visualizer.get_button(but, velocity) # button is 0. No button influence, no button visualization
 
     # add (user_note, pitch, time) to dictionary
-    noteOn_dict[but] = (new_pitch_token, timeNew)
+    noteOn_dict[note] = (new_pitch_token, timeNew, but)
     i += 1
 
   else: # noteOff
-    but = key_to_button(note)
-    #print("but", but)
-    if but in noteOn_dict:
+    # Use original MIDI note as key to find corresponding noteOn
+    if note in noteOn_dict:
 
-      # get pitch and time in dictionary of accumulated notesOns without noteOff
-      pitch, noteOn_time = noteOn_dict[but]
+      # get pitch, time, and button from dictionary of accumulated notesOns without noteOff
+      pitch, noteOn_time, but = noteOn_dict[note]
       playNote(pitch, 0)
       visualizer.get_note(pitch, 0)
       visualizer.get_button(but, 0)
+      # Remove from dictionary to allow the same note to be played again
+      del noteOn_dict[note]
       #visualizer.update(noteOn_time)
+
 
 
 """# MIDI IN """
@@ -280,6 +303,6 @@ try:
       #visualizer.get_note(60, 100)
       #visualizer.get_button(0, 100)
       visualizer.draw()
-except (EOFError, KeyboardInterrupt):
+except (EOFError, KeyboardInterrupt, SystemExit):
     print("Bye.")
 

@@ -47,6 +47,9 @@ AI-mediated-pianistic-improvisation/
 
 ### 1. Dataset Preparation
 
+1. download the dataset files:
+https://drive.google.com/drive/folders/17_JasXY5BtLA7QcIJl10rg-B4Q9bKJuZ?usp=sharing
+
 Place your training data in the `Training-Data/` directory:
 
 - `giantmidi_full_train.pickle` - training dataset (train_selection.py)
@@ -59,18 +62,18 @@ Place your training data in the `Training-Data/` directory:
 
 #### Train:
 Edit `train.py` to choose a model (models in `models.py`) to set the variable "model_name="
-By default, model_name='no_dtime_good_reference'
+By default, model_name='no_dtime_good_reference' (12 buttons) or model_name='melody_arrow_v10' (7 arrows) 
 
-Then, execute:
+
+Then, execute: 
 ```bash
 python train.py
 ```
 
 ### Checkpoints
 
-To use the default `no_dtime_good_reference` model
-1. download the checkpoint file:
-https://drive.google.com/file/d/1CR90pEQwYupaEnG91ZI7Rd9iKVzbiXG8/view?usp=drive_link
+1. download the checkpoint files:
+https://drive.google.com/drive/folders/17_JasXY5BtLA7QcIJl10rg-B4Q9bKJuZ?usp=sharing
 2. put the file in the ./save_models folder
 
 
@@ -80,7 +83,14 @@ Interaction, generating buttons from MIDI keyboard or qwerty keyboard,
 starting with a context extracted from a MIDI file
 
 ```bash
-python interaction_buttons.py
+python interaction_12buttons.py
+```
+or
+```bash
+interaction_5buttons.py
+interaction_1_button.py
+interaction_88_buttons.py
+interaction_arrows.py
 ```
 
 ### 2. Model loaders

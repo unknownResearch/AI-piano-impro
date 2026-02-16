@@ -23,6 +23,7 @@ import time
 import sys
 import fluidsynth
 import os 
+import atexit
 # pip install pyfluidsynth
 from typing import Optional, List
 from rtmidi.midiconstants import NOTE_ON, NOTE_OFF
@@ -47,8 +48,11 @@ AUTOMATIC_ARROWS = False # if True, use original midi file arrows for guidance
 
 
 ''' DEVICE '''
-device = torch.device('cuda') 
-#device = torch.device('mps') 
+if torch.backends.mps.is_available():
+    device = torch.device('mps')
+else:
+    device = torch.device('cuda')
+
 
 ''' MODEL '''
 model_name = 'melody_arrow_v10'
@@ -332,7 +336,7 @@ try:
         for event in pygame.event.get():
             if event.type == QUIT:
                 pygame.quit()
-                sys.exit()
+                sys.exit(0)
                 
             elif event.type == KEYDOWN:
                 if TRACES:
@@ -345,7 +349,7 @@ try:
                 elif event.key == K_p: # Save
                     print("saving performance")
                     save_performance()
-                    os._exit(1)                              
+                    sys.exit(0)                              
                 #elif event.key == K_SPACE: # Reset
                 #    if TRACES:
                 #        print("resetting context")
@@ -356,7 +360,7 @@ try:
                     reset_context(dict_input_tokens2)
                 elif event.key == K_ESCAPE:
                     pygame.quit()
-                    sys.exit()
+                    sys.exit(0)
 
             elif event.type == KEYUP:
                 if event.key in KEY_MAPPING:
@@ -365,5 +369,5 @@ try:
         # Draw visualizer (without handling events internally)
         visualizer.draw(handle_events=False)
         
-except (EOFError, KeyboardInterrupt):
+except (EOFError, KeyboardInterrupt, SystemExit):
     print("Bye.")
