@@ -1,4 +1,4 @@
-# Pianistic Coherence vs. Performer Agency in AI-Mediated Piano Improvisation
+# Real-Time Conditioning Strategies for Shared Agency in AI-Mediated Piano Improvisation
 
 ## Requirements
 
